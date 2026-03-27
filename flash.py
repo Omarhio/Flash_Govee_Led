@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     flash_threshold: float = 200.0
     capture_bbox: tuple[int, int, int, int] = (300, 300, 500, 500)
     poll_interval: float = 0.05
-    api_cooldown: float = 1.0
+    api_cooldown: float = 3.0
 
 settings = Settings()
 
@@ -52,29 +52,39 @@ _http_retry = retry(
 # ── Govee API ──────────────────────────────────────────────────────────────────
 
 @_http_retry
-async def control_device(client: httpx.AsyncClient, device: GoveeDevice, turn_on: bool = True) -> None:
-    action = "allumage" if turn_on else "extinction"
-    command = {
-        "device": device.device_id,
-        "model": device.model,
-        "cmd": {"name": "turn", "value": "on" if turn_on else "off"},
-    }
+async def _send_command(client: httpx.AsyncClient, device: GoveeDevice, cmd: dict) -> None:
+    payload = {"device": device.device_id, "model": device.model, "cmd": cmd}
+    resp = await client.put(f"{GOVEE_API_URL}/control", headers=_headers(), json=payload)
+    resp.raise_for_status()
+
+
+async def initialize_device(client: httpx.AsyncClient, device: GoveeDevice) -> None:
+    """Set LED color to white once at startup to avoid an extra request on each flash."""
     try:
-        resp = await client.put(f"{GOVEE_API_URL}/control", headers=_headers(), json=command)
-        resp.raise_for_status()
-        if turn_on:
-            white_command = {
-                "device": device.device_id,
-                "model": device.model,
-                "cmd": {"name": "color", "value": WHITE},
-            }
-            resp = await client.put(f"{GOVEE_API_URL}/control", headers=_headers(), json=white_command)
-            resp.raise_for_status()
-        logger.info("LED {} — {}", action, device.name)
+        await _send_command(client, device, {"name": "color", "value": WHITE})
+        logger.info("Couleur initiale définie (blanc) — {}", device.name)
     except httpx.HTTPStatusError as e:
-        logger.error("Erreur HTTP {} lors du {} ({})", e.response.status_code, action, device.name)
+        logger.warning("Impossible de définir la couleur initiale (HTTP {})", e.response.status_code)
+
+
+async def turn_on(client: httpx.AsyncClient, device: GoveeDevice) -> None:
+    try:
+        await _send_command(client, device, {"name": "turn", "value": "on"})
+        logger.info("LED allumée — {}", device.name)
+    except httpx.HTTPStatusError as e:
+        logger.error("Erreur HTTP {} lors de l'allumage ({})", e.response.status_code, device.name)
     except httpx.RequestError as e:
-        logger.error("Erreur réseau lors du {} : {}", action, e)
+        logger.error("Erreur réseau lors de l'allumage : {}", e)
+
+
+async def turn_off(client: httpx.AsyncClient, device: GoveeDevice) -> None:
+    try:
+        await _send_command(client, device, {"name": "turn", "value": "off"})
+        logger.info("LED éteinte — {}", device.name)
+    except httpx.HTTPStatusError as e:
+        logger.error("Erreur HTTP {} lors de l'extinction ({})", e.response.status_code, device.name)
+    except httpx.RequestError as e:
+        logger.error("Erreur réseau lors de l'extinction : {}", e)
 
 
 @_http_retry
@@ -115,6 +125,7 @@ async def main() -> None:
             return
 
         logger.success("Appareil trouvé : {} ({})", device.name, device.device_id)
+        await initialize_device(client, device)
         logger.info("Détection de flash en cours...")
 
         flash_on = False
@@ -128,12 +139,12 @@ async def main() -> None:
 
             if is_flash and not flash_on and cooldown_ok:
                 logger.debug("Flash détecté (seuil={})", settings.flash_threshold)
-                await control_device(client, device, turn_on=True)
+                await turn_on(client, device)
                 flash_on = True
                 last_command_at = time.monotonic()
             elif not is_flash and flash_on and cooldown_ok:
                 logger.debug("Fin du flash")
-                await control_device(client, device, turn_on=False)
+                await turn_off(client, device)
                 flash_on = False
                 last_command_at = time.monotonic()
 
