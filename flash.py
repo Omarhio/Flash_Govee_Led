@@ -1,76 +1,91 @@
 import asyncio
+import os
 import numpy as np
-import mss
-from govee_api_laggat import Govee, GoveeError
+from PIL import ImageGrab
+import aiohttp
 
-api_key = 'your_govee_api_key'
-device_name_to_control = "Your LED Device Name"
+api_key = os.environ.get('GOVEE_API_KEY', '')
+device_name_to_control = "Barre Led"
+api_url = "https://developer-api.govee.com/v1/devices"
 
-async def control_device(govee, device, turn_on=True):
+
+async def control_device(session, device_id, model, turn_on=True):
+    headers = {
+        "Govee-API-Key": api_key,
+        "Content-Type": "application/json",
+    }
+    command = {
+        "device": device_id,
+        "model": model,
+        "cmd": {"name": "turn", "value": "on" if turn_on else "off"},
+    }
     try:
+        async with session.put(f"{api_url}/control", headers=headers, json=command) as resp:
+            if not resp.ok:
+                print(f"Erreur lors du {'allumage' if turn_on else 'extinction'} (HTTP {resp.status})")
+                return
         if turn_on:
-            # Allumer la lumière et changer la couleur en blanc
-            success, err = await govee.turn_on(device.device)
-            if success:
-                await govee.set_color(device.device, (255, 255, 255))  # Blanc
-                action = 'allumé et changé en blanc'
-            else:
-                action = 'allumé'
-        else:
-            success, err = await govee.turn_off(device.device)
-            action = 'éteint'
+            white_command = {
+                "device": device_id,
+                "model": model,
+                "cmd": {"name": "color", "value": {"r": 255, "g": 255, "b": 255}},
+            }
+            async with session.put(f"{api_url}/control", headers=headers, json=white_command) as resp:
+                if not resp.ok:
+                    print(f"Erreur lors du réglage de la couleur (HTTP {resp.status})")
+    except aiohttp.ClientError as e:
+        print(f"Erreur réseau : {e}")
 
-        if success:
-            print(f"L'appareil {device.device_name} ({device.device}) a été {action}.")
-        else:
-            print(f"Impossible de {action} l'appareil {device.device_name} ({device.device}): {err}")
-
-    except GoveeError as e:
-        print(f"Erreur lors du contrôle de l'appareil {device.device_name}: {e}")
-
-async def control_barre_led(govee, turn_on):
-    devices, err = await govee.get_devices()
-    if err:
-        print(f"Erreur lors de la récupération des appareils : {err}")
-        return
-    
-    for device in devices:
-        if device.device_name == device_name_to_control:
-            await control_device(govee, device, turn_on)
 
 def detect_flash(threshold=200):
-    with mss.mss() as sct:
-        monitor = {"top": 200, "left": 200, "width": 400, "height": 400}
-        img = np.array(sct.grab(monitor))
-        gray_img = np.mean(img, axis=2)
-        brightness = np.mean(gray_img)
-        return brightness > threshold
+    bbox = (300, 300, 500, 500)
+    img = ImageGrab.grab(bbox=bbox)
+    img_array = np.array(img)
+    brightness = np.mean(img_array[:, :, :3])
+    return brightness > threshold
+
+
+async def get_device_info(session):
+    headers = {"Govee-API-Key": api_key}
+    try:
+        async with session.get(api_url, headers=headers) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                for device in data.get("data", {}).get("devices", []):
+                    if device.get("deviceName") == device_name_to_control:
+                        return device.get("device"), device.get("model")
+    except aiohttp.ClientError as e:
+        print(f"Erreur lors de la récupération des appareils : {e}")
+    return None, None
+
 
 async def main():
-    try:
-        govee = await Govee.create(api_key)
-        
-        print("En attente de la détection d'un flash...")
+    async with aiohttp.ClientSession() as session:
+        device_id, model = await get_device_info(session)
+
+        if not device_id or not model:
+            print(f"Appareil '{device_name_to_control}' introuvable.")
+            return
+
+        print("Détection de flash en cours...")
         flash_on = False
+        loop = asyncio.get_running_loop()
 
         while True:
-            if detect_flash():
+            is_flash = await loop.run_in_executor(None, detect_flash)
+            if is_flash:
                 if not flash_on:
-                    print("Flash détecté ! Allumage des lumières et changement de couleur en blanc...")
-                    await control_barre_led(govee, turn_on=True)
+                    print("Flash détecté ! Allumage des lumières...")
+                    await control_device(session, device_id, model, turn_on=True)
                     flash_on = True
             else:
                 if flash_on:
                     print("Fin du flash. Extinction des lumières...")
-                    await control_barre_led(govee, turn_on=False)
+                    await control_device(session, device_id, model, turn_on=False)
                     flash_on = False
 
-            await asyncio.sleep(0.1)  # Réduire la pause pour une détection plus rapide (0.1 seconde)
+            await asyncio.sleep(0.05)
 
-        await govee.close()
-        
-    except GoveeError as e:
-        print(f"Erreur Govee : {e}")
 
-loop = asyncio.get_event_loop()
-loop.run_until_complete(main())
+if __name__ == "__main__":
+    asyncio.run(main())
