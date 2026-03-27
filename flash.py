@@ -10,21 +10,18 @@ device_name_to_control = "Your LED Device Name"
 async def control_device(govee, device, turn_on=True):
     try:
         if turn_on:
-            # Allumer la lumière et changer la couleur en blanc
             success, err = await govee.turn_on(device.device)
-            if success:
-                await govee.set_color(device.device, (255, 255, 255))  # Blanc
-                action = 'allumé et changé en blanc'
-            else:
-                action = 'allumé'
+            if not success:
+                print(f"Impossible d'allumer {device.device_name} ({device.device}): {err}")
+                return
+            await govee.set_color(device.device, (255, 255, 255))
+            print(f"L'appareil {device.device_name} ({device.device}) a été allumé et changé en blanc.")
         else:
             success, err = await govee.turn_off(device.device)
-            action = 'éteint'
-
-        if success:
-            print(f"L'appareil {device.device_name} ({device.device}) a été {action}.")
-        else:
-            print(f"Impossible de {action} l'appareil {device.device_name} ({device.device}): {err}")
+            if success:
+                print(f"L'appareil {device.device_name} ({device.device}) a été éteint.")
+            else:
+                print(f"Impossible d'éteindre {device.device_name} ({device.device}): {err}")
 
     except GoveeError as e:
         print(f"Erreur lors du contrôle de l'appareil {device.device_name}: {e}")
