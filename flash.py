@@ -45,9 +45,10 @@ def detect_flash(threshold=200):
         return brightness > threshold
 
 async def main():
+    govee = None
     try:
         govee = await Govee.create(api_key)
-        
+
         print("En attente de la détection d'un flash...")
         flash_on = False
 
@@ -63,11 +64,12 @@ async def main():
                     await control_barre_led(govee, turn_on=False)
                     flash_on = False
 
-            await asyncio.sleep(0.1)  # Réduire la pause pour une détection plus rapide (0.1 seconde)
+            await asyncio.sleep(0.1)
 
-        await govee.close()
-        
     except GoveeError as e:
         print(f"Erreur Govee : {e}")
+    finally:
+        if govee:
+            await govee.close()
 
 asyncio.run(main())
