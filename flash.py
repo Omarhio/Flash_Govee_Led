@@ -70,5 +70,4 @@ async def main():
     except GoveeError as e:
         print(f"Erreur Govee : {e}")
 
-loop = asyncio.get_event_loop()
-loop.run_until_complete(main())
+asyncio.run(main())
