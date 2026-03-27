@@ -1,9 +1,10 @@
 import asyncio
+import os
 import numpy as np
 import mss
 from govee_api_laggat import Govee, GoveeError
 
-api_key = 'your_govee_api_key'
+api_key = os.environ.get('GOVEE_API_KEY', '')
 device_name_to_control = "Your LED Device Name"
 
 async def control_device(govee, device, turn_on=True):
