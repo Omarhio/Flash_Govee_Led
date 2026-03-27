@@ -1,46 +1,50 @@
 # Flash LED Controller with Screen Flash Detection
 
-This Python script controls a Govee LED light in response to brightness flashes detected on screen. When a flash is detected, the LED turns on in white and stays on for the duration of the flash, then turns off. Useful for immersive gaming or ambient lighting reactions.
+Controls a Govee LED strip via the **local LAN API** (UDP) in response to brightness flashes detected on screen. No cloud dependency, no rate limits, near-instant response.
 
 ## Features
 
-- **Screen Flash Detection**: Uses `Pillow` to capture a screen region and monitor RGB brightness changes.
-- **Govee LED Control**: Directly calls the official Govee HTTP API via `aiohttp` — no third-party wrapper.
-- **Non-blocking capture**: Screen capture runs in a thread executor so the async event loop stays responsive.
-- **Optimized Response Time**: Polls brightness every 0.05 seconds.
+- **Screen flash detection** — captures a screen region and monitors RGB brightness with `Pillow`
+- **LAN UDP control** — direct communication with the device on your local network via `govee-local-api`
+- **Non-blocking capture** — screen capture runs in a thread executor, keeping the async loop responsive
+- **Typed configuration** — all settings managed via `.env` with `pydantic-settings`
+- **Structured logging** — log levels via `loguru`
 
 ## Requirements
 
-- **Python 3.10** or higher
-- **Govee API Key**: Generate one from the [Govee Developer Portal](https://developer.govee.com/).
+- **Python 3.11+**
+- A Govee LED strip that supports the LAN API — check the [supported device list](https://app-h5.govee.com/user-manual/wlan-guide)
 
-### Required Python Libraries
-
-```bash
-pip install numpy pillow aiohttp
-```
-
-## Configuration
-
-### API Key
-
-Set your Govee API key as an environment variable:
+### Install dependencies
 
 ```bash
-# Linux / macOS
-export GOVEE_API_KEY="your_api_key"
-
-# Windows
-set GOVEE_API_KEY=your_api_key
+pip install numpy pillow govee-local-api pydantic-settings loguru
 ```
 
-### Device Name
+## Setup
 
-Edit the `device_name_to_control` variable in `flash.py` to match your device's name as it appears in the Govee app:
+### 1. Enable LAN Control on your device
 
-```python
-device_name_to_control = "Barre Led"
+In the **Govee Home app** → select your device → tap the settings icon → enable **"LAN Control"**.
+Without this step, the script cannot discover the device.
+
+### 2. Find your device's local IP
+
+Check your router's DHCP table, or look in the Govee app under device info.
+
+### 3. Configure `.env`
+
+```bash
+cp .env.example .env
 ```
+
+Edit `.env`:
+
+```env
+DEVICE_IP=192.168.1.xxx
+```
+
+All other settings are optional (defaults shown in `.env.example`).
 
 ## Usage
 
@@ -49,33 +53,36 @@ python flash.py
 ```
 
 The script will:
-1. Connect to the Govee API and resolve the target device.
-2. Monitor a screen region for brightness changes.
-3. Turn the LED on (white) when a flash is detected.
-4. Turn the LED off when the flash ends.
+1. Connect to the device at `DEVICE_IP` via LAN UDP
+2. Set the initial color to white
+3. Turn the LED on (white) when a flash is detected
+4. Turn it off when the flash ends
 
-## Script Details
+## Configuration reference
 
-### Flash Detection (`detect_flash`)
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DEVICE_IP` | *(required)* | Local IP of the Govee LED strip |
+| `FLASH_THRESHOLD` | `200.0` | Brightness threshold (0–255) to trigger a flash |
+| `CAPTURE_BBOX` | `[300,300,500,500]` | Screen region to monitor `[left, top, right, bottom]` |
+| `POLL_INTERVAL` | `0.05` | Seconds between each brightness check |
+| `DISCOVERY_TIMEOUT` | `10.0` | Seconds to wait for device to respond on startup |
+
+## Script details
+
+### Flash detection
 
 ```python
-def detect_flash(threshold=200):
-    bbox = (300, 300, 500, 500)
-    img = ImageGrab.grab(bbox=bbox)
-    img_array = np.array(img)
-    brightness = np.mean(img_array[:, :, :3])
-    return brightness > threshold
+def detect_flash() -> bool:
+    img = ImageGrab.grab(bbox=settings.capture_bbox)
+    brightness = float(np.mean(np.array(img)[:, :, :3]))
+    return brightness > settings.flash_threshold
 ```
 
-1. **Capture region**: A 200×200 px area at `(300, 300)` on the primary monitor. Adjust `bbox` to target any screen area.
-2. **RGB brightness**: Averages the R, G, B channels (alpha excluded) for an accurate brightness value.
-3. **Threshold**: Returns `True` if average brightness exceeds `200/255`. Adjust `threshold` to tune sensitivity.
+Captures a screen region, averages the RGB channels, and compares against the threshold.
+Adjust `CAPTURE_BBOX` to target the area most likely to flash (e.g. center of screen).
 
-### Govee LED Control (`control_device`)
+### LAN communication
 
-Sends PUT requests directly to `https://developer-api.govee.com/v1/devices/control`:
-
-- **Turn on**: sends a `turn: on` command, then a `color: {r:255, g:255, b:255}` command to set white.
-- **Turn off**: sends a `turn: off` command.
-
-HTTP errors are caught and printed without crashing the loop.
+Uses `govee-local-api` which sends UDP packets directly to the device on ports 4001–4003.
+No API key, no cloud, no rate limits.
