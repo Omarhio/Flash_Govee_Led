@@ -10,7 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # ── Configuration ──────────────────────────────────────────────────────────────
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     device_ip: str
     flash_threshold: float = 200.0
