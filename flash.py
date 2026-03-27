@@ -69,9 +69,11 @@ async def main():
 
         print("Détection de flash en cours...")
         flash_on = False
+        loop = asyncio.get_running_loop()
 
         while True:
-            if detect_flash():
+            is_flash = await loop.run_in_executor(None, detect_flash)
+            if is_flash:
                 if not flash_on:
                     print("Flash détecté ! Allumage des lumières...")
                     await control_device(session, device_id, model, turn_on=True)
