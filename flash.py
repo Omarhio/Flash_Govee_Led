@@ -43,7 +43,7 @@ def detect_flash(threshold=200):
     with mss.mss() as sct:
         monitor = {"top": 200, "left": 200, "width": 400, "height": 400}
         img = np.array(sct.grab(monitor))
-        gray_img = np.mean(img, axis=2)
+        gray_img = np.mean(img[:, :, :3], axis=2)
         brightness = np.mean(gray_img)
         return brightness > threshold
 
