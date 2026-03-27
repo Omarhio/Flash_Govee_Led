@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 import httpx
 import numpy as np
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 from PIL import ImageGrab
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -37,6 +38,15 @@ def _headers() -> dict[str, str]:
     return {"Govee-API-Key": settings.govee_api_key, "Content-Type": "application/json"}
 
 
+_http_retry = retry(
+    retry=retry_if_exception_type(httpx.RequestError),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=4),
+    reraise=True,
+)
+
+
+@_http_retry
 async def control_device(client: httpx.AsyncClient, device: GoveeDevice, turn_on: bool = True) -> None:
     command = {
         "device": device.device_id,
@@ -66,6 +76,7 @@ def detect_flash() -> bool:
     return brightness > settings.flash_threshold
 
 
+@_http_retry
 async def get_device_info(client: httpx.AsyncClient) -> GoveeDevice | None:
     try:
         resp = await client.get(GOVEE_API_URL, headers=_headers())
