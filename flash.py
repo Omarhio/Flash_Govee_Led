@@ -26,16 +26,6 @@ async def control_device(govee, device, turn_on=True):
     except GoveeError as e:
         print(f"Erreur lors du contrôle de l'appareil {device.device_name}: {e}")
 
-async def control_barre_led(govee, turn_on):
-    devices, err = await govee.get_devices()
-    if err:
-        print(f"Erreur lors de la récupération des appareils : {err}")
-        return
-    
-    for device in devices:
-        if device.device_name == device_name_to_control:
-            await control_device(govee, device, turn_on)
-
 def detect_flash(threshold=200):
     with mss.mss() as sct:
         monitor = {"top": 200, "left": 200, "width": 400, "height": 400}
@@ -49,6 +39,15 @@ async def main():
     try:
         govee = await Govee.create(api_key)
 
+        devices, err = await govee.get_devices()
+        if err:
+            print(f"Erreur lors de la récupération des appareils : {err}")
+            return
+        target = next((d for d in devices if d.device_name == device_name_to_control), None)
+        if target is None:
+            print(f"Appareil '{device_name_to_control}' introuvable.")
+            return
+
         print("En attente de la détection d'un flash...")
         flash_on = False
 
@@ -56,12 +55,12 @@ async def main():
             if detect_flash():
                 if not flash_on:
                     print("Flash détecté ! Allumage des lumières et changement de couleur en blanc...")
-                    await control_barre_led(govee, turn_on=True)
+                    await control_device(govee, target, turn_on=True)
                     flash_on = True
             else:
                 if flash_on:
                     print("Fin du flash. Extinction des lumières...")
-                    await control_barre_led(govee, turn_on=False)
+                    await control_device(govee, target, turn_on=False)
                     flash_on = False
 
             await asyncio.sleep(0.1)
