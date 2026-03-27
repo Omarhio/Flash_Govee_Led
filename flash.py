@@ -41,7 +41,7 @@ def detect_flash(threshold=200):
     bbox = (300, 300, 500, 500)
     img = ImageGrab.grab(bbox=bbox)
     img_array = np.array(img)
-    brightness = np.mean(img_array)
+    brightness = np.mean(img_array[:, :, :3])
     return brightness > threshold
 
 
