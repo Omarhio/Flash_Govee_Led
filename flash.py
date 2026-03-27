@@ -41,36 +41,34 @@ def turn_off(ip: str) -> None:
 def set_color(ip: str, r: int, g: int, b: int) -> None:
     _send_udp(ip, {"cmd": "colorwc", "data": {"color": {"r": r, "g": g, "b": b}, "colorTemInKelvin": 0}})
 
-# ── Screen detection ───────────────────────────────────────────────────────────
+# ── Screen sampling ────────────────────────────────────────────────────────────
 
-def detect_flash() -> bool:
-    img = ImageGrab.grab(bbox=settings.capture_bbox)
-    brightness = float(np.mean(np.array(img)[:, :, :3]))
-    return brightness > settings.flash_threshold
+def sample_screen() -> tuple[bool, tuple[int, int, int]]:
+    img_array = np.array(ImageGrab.grab(bbox=settings.capture_bbox))[:, :, :3]
+    r, g, b = (int(np.mean(img_array[:, :, i])) for i in range(3))
+    brightness = (r + g + b) / 3
+    return brightness > settings.flash_threshold, (r, g, b)
 
 # ── Main loop ──────────────────────────────────────────────────────────────────
 
 async def main() -> None:
     ip = settings.device_ip
     logger.info("Démarrage — connexion LAN à {}", ip)
-
-    # Set initial color to white (persists across on/off cycles)
-    turn_on(ip)
-    set_color(ip, 255, 255, 255)
-    turn_off(ip)
-    logger.success("Appareil initialisé (blanc) — détection de flash en cours...")
+    logger.success("Détection de flash en cours...")
 
     flash_on = False
     loop = asyncio.get_running_loop()
 
     while True:
-        is_flash = await loop.run_in_executor(None, detect_flash)
+        is_flash, (r, g, b) = await loop.run_in_executor(None, sample_screen)
 
-        if is_flash and not flash_on:
-            logger.debug("Flash détecté (seuil={})", settings.flash_threshold)
-            await loop.run_in_executor(None, turn_on, ip)
-            flash_on = True
-        elif not is_flash and flash_on:
+        if is_flash:
+            if not flash_on:
+                logger.debug("Flash détecté — couleur ({}, {}, {})", r, g, b)
+                await loop.run_in_executor(None, turn_on, ip)
+                flash_on = True
+            await loop.run_in_executor(None, set_color, ip, r, g, b)
+        elif flash_on:
             logger.debug("Fin du flash")
             await loop.run_in_executor(None, turn_off, ip)
             flash_on = False
