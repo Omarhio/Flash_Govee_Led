@@ -51,8 +51,10 @@ async def main():
         print("En attente de la détection d'un flash...")
         flash_on = False
 
+        loop = asyncio.get_running_loop()
         while True:
-            if detect_flash():
+            is_flash = await loop.run_in_executor(None, detect_flash)
+            if is_flash:
                 if not flash_on:
                     print("Flash détecté ! Allumage des lumières et changement de couleur en blanc...")
                     await control_device(govee, target, turn_on=True)
