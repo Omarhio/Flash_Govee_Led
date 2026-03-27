@@ -1,9 +1,9 @@
 import asyncio
 from dataclasses import dataclass
 
+import httpx
 import numpy as np
 from PIL import ImageGrab
-import aiohttp
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # ── Configuration ──────────────────────────────────────────────────────────────
@@ -33,31 +33,30 @@ class GoveeDevice:
     name: str
 
 
-async def control_device(session: aiohttp.ClientSession, device: GoveeDevice, turn_on: bool = True) -> None:
-    headers = {
-        "Govee-API-Key": settings.govee_api_key,
-        "Content-Type": "application/json",
-    }
+def _headers() -> dict[str, str]:
+    return {"Govee-API-Key": settings.govee_api_key, "Content-Type": "application/json"}
+
+
+async def control_device(client: httpx.AsyncClient, device: GoveeDevice, turn_on: bool = True) -> None:
     command = {
         "device": device.device_id,
         "model": device.model,
         "cmd": {"name": "turn", "value": "on" if turn_on else "off"},
     }
     try:
-        async with session.put(f"{GOVEE_API_URL}/control", headers=headers, json=command) as resp:
-            if not resp.ok:
-                print(f"Erreur lors du {'allumage' if turn_on else 'extinction'} (HTTP {resp.status})")
-                return
+        resp = await client.put(f"{GOVEE_API_URL}/control", headers=_headers(), json=command)
+        resp.raise_for_status()
         if turn_on:
             white_command = {
                 "device": device.device_id,
                 "model": device.model,
                 "cmd": {"name": "color", "value": WHITE},
             }
-            async with session.put(f"{GOVEE_API_URL}/control", headers=headers, json=white_command) as resp:
-                if not resp.ok:
-                    print(f"Erreur lors du réglage de la couleur (HTTP {resp.status})")
-    except aiohttp.ClientError as e:
+            resp = await client.put(f"{GOVEE_API_URL}/control", headers=_headers(), json=white_command)
+            resp.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        print(f"Erreur HTTP {e.response.status_code} lors du {'allumage' if turn_on else 'extinction'}")
+    except httpx.RequestError as e:
         print(f"Erreur réseau : {e}")
 
 
@@ -67,27 +66,27 @@ def detect_flash() -> bool:
     return brightness > settings.flash_threshold
 
 
-async def get_device_info(session: aiohttp.ClientSession) -> GoveeDevice | None:
-    headers = {"Govee-API-Key": settings.govee_api_key}
+async def get_device_info(client: httpx.AsyncClient) -> GoveeDevice | None:
     try:
-        async with session.get(GOVEE_API_URL, headers=headers) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                for device in data.get("data", {}).get("devices", []):
-                    if device.get("deviceName") == settings.device_name:
-                        return GoveeDevice(
-                            device_id=device["device"],
-                            model=device["model"],
-                            name=device["deviceName"],
-                        )
-    except aiohttp.ClientError as e:
-        print(f"Erreur lors de la récupération des appareils : {e}")
+        resp = await client.get(GOVEE_API_URL, headers=_headers())
+        resp.raise_for_status()
+        for device in resp.json().get("data", {}).get("devices", []):
+            if device.get("deviceName") == settings.device_name:
+                return GoveeDevice(
+                    device_id=device["device"],
+                    model=device["model"],
+                    name=device["deviceName"],
+                )
+    except httpx.HTTPStatusError as e:
+        print(f"Erreur HTTP {e.response.status_code} lors de la récupération des appareils")
+    except httpx.RequestError as e:
+        print(f"Erreur réseau : {e}")
     return None
 
 
 async def main() -> None:
-    async with aiohttp.ClientSession() as session:
-        device = await get_device_info(session)
+    async with httpx.AsyncClient(timeout=10) as client:
+        device = await get_device_info(client)
 
         if device is None:
             print(f"Appareil '{settings.device_name}' introuvable.")
@@ -102,12 +101,12 @@ async def main() -> None:
             if is_flash:
                 if not flash_on:
                     print("Flash détecté ! Allumage des lumières...")
-                    await control_device(session, device, turn_on=True)
+                    await control_device(client, device, turn_on=True)
                     flash_on = True
             else:
                 if flash_on:
                     print("Fin du flash. Extinction des lumières...")
-                    await control_device(session, device, turn_on=False)
+                    await control_device(client, device, turn_on=False)
                     flash_on = False
 
             await asyncio.sleep(settings.poll_interval)
