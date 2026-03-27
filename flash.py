@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import dataclass
+import time
 
 import httpx
 import numpy as np
@@ -18,6 +19,7 @@ class Settings(BaseSettings):
     flash_threshold: float = 200.0
     capture_bbox: tuple[int, int, int, int] = (300, 300, 500, 500)
     poll_interval: float = 0.05
+    api_cooldown: float = 1.0
 
 settings = Settings()
 
@@ -116,18 +118,24 @@ async def main() -> None:
         logger.info("Détection de flash en cours...")
 
         flash_on = False
+        last_command_at: float = 0.0
         loop = asyncio.get_running_loop()
 
         while True:
             is_flash = await loop.run_in_executor(None, detect_flash)
-            if is_flash and not flash_on:
+            now = time.monotonic()
+            cooldown_ok = (now - last_command_at) >= settings.api_cooldown
+
+            if is_flash and not flash_on and cooldown_ok:
                 logger.debug("Flash détecté (seuil={})", settings.flash_threshold)
                 await control_device(client, device, turn_on=True)
                 flash_on = True
-            elif not is_flash and flash_on:
+                last_command_at = time.monotonic()
+            elif not is_flash and flash_on and cooldown_ok:
                 logger.debug("Fin du flash")
                 await control_device(client, device, turn_on=False)
                 flash_on = False
+                last_command_at = time.monotonic()
 
             await asyncio.sleep(settings.poll_interval)
 
